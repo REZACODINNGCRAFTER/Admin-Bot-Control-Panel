@@ -19,6 +19,8 @@ BLOCK_MEDIA = False
 BLOCK_LINKS = True
 FLOOD_PROTECTION = True
 ANTI_BOT = True
+CLEAN_JOIN = True
+CLEAN_LEAVE = True
 
 WELCOME_MSG = "🎉 Welcome, {name}!"
 
@@ -31,7 +33,6 @@ URL_REGEX = re.compile(
     re.IGNORECASE
 )
 
-
 # ====================================================
 #                     DATA STORAGE
 # ====================================================
@@ -41,13 +42,12 @@ SHADOW_BANNED = set()
 ROLES = {}
 FLOOD_TRACKER = {}  # uid -> deque
 
-
 # ====================================================
 #                       HELPERS
 # ====================================================
 
 def safe_call(func, *args, **kwargs):
-    """Run Telegram API calls safely and ignore harmless errors."""
+    """Run Telegram API calls safely."""
     try:
         return func(*args, **kwargs)
     except Exception as exc:
@@ -59,8 +59,7 @@ def get_real_admins(chat_id):
     try:
         admins = bot.get_chat_administrators(chat_id)
         return {adm.user.id for adm in admins}
-    except Exception as exc:
-        print("[ADMIN FETCH ERROR]", exc)
+    except:
         return STATIC_ADMINS
 
 
@@ -70,34 +69,27 @@ def is_admin(uid, chat_id):
 
 
 def admin_only(func):
-    """Decorator restricting commands to admins only."""
     @wraps(func)
     def wrapper(message, *args, **kwargs):
-        uid = message.from_user.id
-        chat_id = message.chat.id
-
-        if not is_admin(uid, chat_id):
+        if not is_admin(message.from_user.id, message.chat.id):
             return safe_call(bot.reply_to, message, "❌ You don’t have permission.")
         return func(message, *args, **kwargs)
-
     return wrapper
 
 
 def extract_target(message):
-    """Extract the user the admin replied to."""
+    """Extract user target from reply."""
     if not message.reply_to_message:
-        safe_call(bot.reply_to, message, "Reply to a user's message.")
-        return None
+        return safe_call(bot.reply_to, message, "Reply to a user's message.")
 
     user = message.reply_to_message.from_user
     chat_id = message.chat.id
+    bot_id = bot.get_me().id
 
     if user.id == message.from_user.id:
         return safe_call(bot.reply_to, message, "You cannot target yourself.")
-
-    if user.id == bot.get_me().id:
+    if user.id == bot_id:
         return safe_call(bot.reply_to, message, "I refuse to punish myself 😿")
-
     if is_admin(user.id, chat_id):
         return safe_call(bot.reply_to, message, "Admins cannot be moderated.")
 
@@ -105,7 +97,6 @@ def extract_target(message):
 
 
 def full_permissions():
-    """Returns full chat permissions."""
     return ChatPermissions(
         can_send_messages=True,
         can_send_media_messages=True,
@@ -115,9 +106,8 @@ def full_permissions():
         can_send_polls=True
     )
 
-
 # ====================================================
-#                   BASIC COMMANDS
+#                START / HELP
 # ====================================================
 
 @bot.message_handler(commands=['start', 'help'])
@@ -138,7 +128,7 @@ def start(message):
 • /shadowban  
 • /unshadow  
 
-**Chat**
+**Chat Management**
 • /lock /unlock  
 • /pin /unpin  
 • /slowmode <sec>  
@@ -147,15 +137,14 @@ def start(message):
 • /role <role>  
 • /myrole  
 
-**Protection**
+**Security**
 • /antilink on/off  
 • /antimedia on/off  
 • /flood on/off  
 • /use_real_admins on/off  
 
-Welcome system + anti-bot enabled.
+Welcome system, anti-bot, and join/leave cleaner are active.
 """)
-
 
 # ====================================================
 #                     MODERATION
@@ -167,8 +156,7 @@ def kick_user(message):
     uid = extract_target(message)
     if uid:
         safe_call(bot.kick_chat_member, message.chat.id, uid)
-        safe_call(bot.send_message, message.chat.id, f"👢 Kicked `{uid}`")
-
+        bot.send_message(message.chat.id, f"👢 Kicked `{uid}`")
 
 @bot.message_handler(commands=['ban'])
 @admin_only
@@ -176,8 +164,7 @@ def ban_user(message):
     uid = extract_target(message)
     if uid:
         safe_call(bot.ban_chat_member, message.chat.id, uid)
-        safe_call(bot.send_message, message.chat.id, f"🚫 Banned `{uid}`")
-
+        bot.send_message(message.chat.id, f"🚫 Banned `{uid}`")
 
 @bot.message_handler(commands=['unban'])
 @admin_only
@@ -185,8 +172,7 @@ def unban_user(message):
     uid = extract_target(message)
     if uid:
         safe_call(bot.unban_chat_member, message.chat.id, uid)
-        safe_call(bot.send_message, message.chat.id, f"♻️ Unbanned `{uid}`")
-
+        bot.send_message(message.chat.id, f"♻️ Unbanned `{uid}`")
 
 # ====================================================
 #                     MUTE SYSTEM
@@ -197,13 +183,10 @@ def unban_user(message):
 def mute(message):
     uid = extract_target(message)
     if uid:
-        safe_call(bot.restrict_chat_member,
-                  message.chat.id,
-                  uid,
+        safe_call(bot.restrict_chat_member, message.chat.id, uid,
                   permissions=ChatPermissions(can_send_messages=False),
                   until_date=int(time.time() + 600))
-        safe_call(bot.send_message, message.chat.id, f"🔇 Muted `{uid}` for 10m")
-
+        bot.send_message(message.chat.id, f"🔇 Muted `{uid}` for 10m")
 
 @bot.message_handler(commands=['unmute'])
 @admin_only
@@ -212,8 +195,7 @@ def unmute(message):
     if uid:
         safe_call(bot.restrict_chat_member, message.chat.id, uid,
                   permissions=full_permissions())
-        safe_call(bot.send_message, message.chat.id, f"🔊 Unmuted `{uid}`")
-
+        bot.send_message(message.chat.id, f"🔊 Unmuted `{uid}`")
 
 # ====================================================
 #                     TEMP BAN
@@ -232,14 +214,11 @@ def tban(message):
     minutes = int(parts[1])
     uid = message.reply_to_message.from_user.id
 
-    safe_call(bot.ban_chat_member,
-              message.chat.id,
-              uid,
+    safe_call(bot.ban_chat_member, message.chat.id, uid,
               until_date=int(time.time() + minutes * 60))
 
-    safe_call(bot.send_message, message.chat.id,
-              f"⛔ Temp-banned `{uid}` for {minutes} minutes")
-
+    bot.send_message(message.chat.id,
+                     f"⛔ Temp-banned `{uid}` for {minutes} minutes")
 
 # ====================================================
 #                     WARN SYSTEM
@@ -259,10 +238,9 @@ def warn(message):
     count = WARNINGS[chat][uid]
     if count >= 3:
         safe_call(bot.ban_chat_member, chat, uid)
-        safe_call(bot.send_message, chat, f"⛔ `{uid}` auto-banned (3 warnings)")
+        bot.send_message(chat, f"⛔ `{uid}` auto-banned (3 warnings)")
     else:
-        safe_call(bot.send_message, chat, f"⚠ Warning {count}/3 for `{uid}`")
-
+        bot.send_message(chat, f"⚠ Warning {count}/3 for `{uid}`")
 
 @bot.message_handler(commands=['clearwarn'])
 @admin_only
@@ -270,9 +248,8 @@ def clearwarn(message):
     uid = extract_target(message)
     if uid:
         WARNINGS.get(message.chat.id, {}).pop(uid, None)
-        safe_call(bot.send_message, message.chat.id,
-                  f"✨ Warnings cleared for `{uid}`")
-
+        bot.send_message(message.chat.id,
+                         f"✨ Warnings cleared for `{uid}`")
 
 # ====================================================
 #                         PURGE
@@ -290,8 +267,7 @@ def purge(message):
     for mid in range(start, end + 1):
         safe_call(bot.delete_message, message.chat.id, mid)
 
-    safe_call(bot.send_message, message.chat.id, "🗑 Purge complete.")
-
+    bot.send_message(message.chat.id, "🗑 Purge complete.")
 
 # ====================================================
 #                     LOCK / UNLOCK
@@ -300,18 +276,15 @@ def purge(message):
 @bot.message_handler(commands=['lock'])
 @admin_only
 def lock(message):
-    safe_call(bot.set_chat_permissions,
-              message.chat.id,
+    safe_call(bot.set_chat_permissions, message.chat.id,
               ChatPermissions(can_send_messages=False))
-    safe_call(bot.send_message, message.chat.id, "🔐 Chat locked")
-
+    bot.send_message(message.chat.id, "🔐 Chat locked")
 
 @bot.message_handler(commands=['unlock'])
 @admin_only
 def unlock(message):
     safe_call(bot.set_chat_permissions, message.chat.id, full_permissions())
-    safe_call(bot.send_message, message.chat.id, "🔓 Chat unlocked")
-
+    bot.send_message(message.chat.id, "🔓 Chat unlocked")
 
 # ====================================================
 #                     PIN / UNPIN
@@ -326,12 +299,10 @@ def pin(message):
               message.chat.id,
               message.reply_to_message.message_id)
 
-
 @bot.message_handler(commands=['unpin'])
 @admin_only
 def unpin(message):
     safe_call(bot.unpin_chat_message, message.chat.id)
-
 
 # ====================================================
 #                     SLOWMODE
@@ -346,9 +317,8 @@ def slowmode(message):
 
     seconds = int(parts[1])
     safe_call(bot.set_chat_slow_mode, message.chat.id, seconds)
-    safe_call(bot.send_message, message.chat.id,
-              f"🐢 Slowmode set to {seconds}s")
-
+    bot.send_message(message.chat.id,
+                     f"🐢 Slowmode set to {seconds}s")
 
 # ====================================================
 #                       ROLES
@@ -364,19 +334,16 @@ def role(message):
     if len(parts) < 2:
         return bot.reply_to(message, "Usage: /role <text>")
 
-    role_name = parts[1]
     uid = message.reply_to_message.from_user.id
-    ROLES[uid] = role_name
+    ROLES[uid] = parts[1]
 
-    safe_call(bot.send_message, message.chat.id,
-              f"🎖 Assigned role: `{role_name}`")
-
+    bot.send_message(message.chat.id,
+                     f"🎖 Assigned role: `{parts[1]}`")
 
 @bot.message_handler(commands=['myrole'])
 def myrole(message):
     role = ROLES.get(message.from_user.id, "No role assigned")
-    safe_call(bot.reply_to, message, f"Your role: **{role}**")
-
+    bot.reply_to(message, f"Your role: **{role}**")
 
 # ====================================================
 #                  SHADOWBAN SYSTEM
@@ -388,9 +355,8 @@ def shadowban(message):
     uid = extract_target(message)
     if uid:
         SHADOW_BANNED.add(uid)
-        safe_call(bot.send_message, message.chat.id,
-                  f"👁 Shadow-banned `{uid}`")
-
+        bot.send_message(message.chat.id,
+                         f"👁 Shadow-banned `{uid}`")
 
 @bot.message_handler(commands=['unshadow'])
 @admin_only
@@ -398,9 +364,8 @@ def unshadow(message):
     uid = extract_target(message)
     if uid:
         SHADOW_BANNED.discard(uid)
-        safe_call(bot.send_message, message.chat.id,
-                  f"👁 Removed shadowban for `{uid}`")
-
+        bot.send_message(message.chat.id,
+                         f"👁 Removed shadowban for `{uid}`")
 
 # ====================================================
 #                  SETTINGS / TOGGLES
@@ -418,49 +383,56 @@ def toggle(message, var_name, label):
     globals()[var_name] = (value == "on")
     bot.reply_to(message, f"{label} {'enabled' if value == 'on' else 'disabled'}")
 
-
 @bot.message_handler(commands=['antilink'])
 @admin_only
 def antl(message): toggle(message, "BLOCK_LINKS", "🔗 Anti-link")
-
 
 @bot.message_handler(commands=['antimedia'])
 @admin_only
 def antm(message): toggle(message, "BLOCK_MEDIA", "📵 Anti-media")
 
-
 @bot.message_handler(commands=['flood'])
 @admin_only
 def antf(message): toggle(message, "FLOOD_PROTECTION", "🚨 Anti-flood")
 
-
 @bot.message_handler(commands=['use_real_admins'])
 @admin_only
-def usar(message): toggle(message, "USE_REAL_ADMINS", "🛡 Real admin check")
-
+def usar(message): toggle(message, "USE_REAL_ADMINS", "🛡 Real admin checks")
 
 # ====================================================
-#   WELCOME, AUTO-DELETE JOIN/LEAVE & ANTI-BOT
+#          UNIFIED JOIN / LEAVE HANDLER
 # ====================================================
 
 @bot.message_handler(content_types=['new_chat_members'])
-def welcome(message):
-    safe_call(bot.delete_message, message.chat.id, message.message_id)
+def handle_join(message):
+    bot_info = bot.get_me()
+
+    # Clean join notification
+    if CLEAN_JOIN:
+        safe_call(bot.delete_message, message.chat.id, message.message_id)
 
     for user in message.new_chat_members:
+
+        # Anti-bot protection
         if ANTI_BOT and user.is_bot and not is_admin(user.id, message.chat.id):
             safe_call(bot.kick_chat_member, message.chat.id, user.id)
             continue
 
-        safe_call(bot.send_message,
-                  message.chat.id,
+        # Bot introduced
+        if user.id == bot_info.id:
+            safe_call(bot.send_message, message.chat.id,
+                      "👋 Thanks for adding me!\n"
+                      "Please promote me to admin so I can clean join/leave messages and protect your group.")
+            continue
+
+        # Welcome normal users
+        safe_call(bot.send_message, message.chat.id,
                   WELCOME_MSG.replace("{name}", user.first_name))
 
-
 @bot.message_handler(content_types=['left_chat_member'])
-def auto_delete_leave(message):
-    safe_call(bot.delete_message, message.chat.id, message.message_id)
-
+def handle_leave(message):
+    if CLEAN_LEAVE:
+        safe_call(bot.delete_message, message.chat.id, message.message_id)
 
 # ====================================================
 #               MESSAGE FILTER PROTECTION
@@ -501,63 +473,12 @@ def filter_messages(message):
                       permissions=ChatPermissions(can_send_messages=False),
                       until_date=int(now + AUTO_MUTE))
 
-            safe_call(bot.send_message,
-                      chat,
-                      f"🚫 Flood detected! Muted for {AUTO_MUTE}s")
+            bot.send_message(chat,
+                             f"🚫 Flood detected! Muted for {AUTO_MUTE}s")
 
-
-# ====================================================
-#                   new chat and left chat member
-# ====================================================
-@bot.message_handler(content_types=['new_chat_members'])
-def delete_join_message(message):
-    bot_info = bot.get_me()
-
-    # Try deleting the join message
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-        return
-    except Exception as e:
-        print("Join delete failed:", e)
-
-    # If deleting failed → bot is likely not admin
-    # Check if the new member is NOT the bot itself
-    new_users = message.new_chat_members
-
-    # If bot joined the group
-    if any(member.id == bot_info.id for member in new_users):
-        bot.send_message(
-            message.chat.id,
-            "👋 Thanks for adding me!\n"
-            "Please promote me to admin so I can remove join/leave messages automatically."
-        )
-    else:
-        bot.send_message(
-            message.chat.id,
-            "⚠️ I need admin rights to remove join notifications."
-        )
-
-
-@bot.message_handler(content_types=['left_chat_member'])
-def delete_leave_message(message):
-    bot_info = bot.get_me()
-
-    # If bot itself is removed → skip deletion (it can’t delete)
-    if message.left_chat_member.id == bot_info.id:
-        return
-
-    # Try deleting the leave notification
-    try:
-        bot.delete_message(message.chat.id, message.message_id)
-    except Exception as e:
-        print("Leave delete failed:", e)
-        bot.send_message(
-            message.chat.id,
-            "⚠️ I need admin rights to remove leave notifications."
-        ) 
 # ====================================================
 #                      RUN BOT
 # ====================================================
 
 print("Bot is running...")
-bot.infinity_polling()
+bot.infinity_polling() 
