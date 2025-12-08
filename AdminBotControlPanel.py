@@ -507,6 +507,55 @@ def filter_messages(message):
 
 
 # ====================================================
+#                   new chat and left chat member
+# ====================================================
+@bot.message_handler(content_types=['new_chat_members'])
+def delete_join_message(message):
+    bot_info = bot.get_me()
+
+    # Try deleting the join message
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+        return
+    except Exception as e:
+        print("Join delete failed:", e)
+
+    # If deleting failed → bot is likely not admin
+    # Check if the new member is NOT the bot itself
+    new_users = message.new_chat_members
+
+    # If bot joined the group
+    if any(member.id == bot_info.id for member in new_users):
+        bot.send_message(
+            message.chat.id,
+            "👋 Thanks for adding me!\n"
+            "Please promote me to admin so I can remove join/leave messages automatically."
+        )
+    else:
+        bot.send_message(
+            message.chat.id,
+            "⚠️ I need admin rights to remove join notifications."
+        )
+
+
+@bot.message_handler(content_types=['left_chat_member'])
+def delete_leave_message(message):
+    bot_info = bot.get_me()
+
+    # If bot itself is removed → skip deletion (it can’t delete)
+    if message.left_chat_member.id == bot_info.id:
+        return
+
+    # Try deleting the leave notification
+    try:
+        bot.delete_message(message.chat.id, message.message_id)
+    except Exception as e:
+        print("Leave delete failed:", e)
+        bot.send_message(
+            message.chat.id,
+            "⚠️ I need admin rights to remove leave notifications."
+        ) 
+# ====================================================
 #                      RUN BOT
 # ====================================================
 
