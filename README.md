@@ -1,2 +1,4 @@
 # Admin-Bot-Control-Panel
 Admin Bot Control Panel
+
+This project is a fully featured Telegram group-management bot built using PyTelegramBotAPI. It provides advanced moderation tools including kicking, banning, muting, temp-banning, warning, shadow-banning, and message purging. The bot enhances group safety with automated protections like anti-link filtering, anti-media blocking, anti-flood rate-limits, and anti-bot detection. It also offers quality-of-life utilities such as slow-mode control, pin/unpin, role assignment, chat locking, and customizable welcome messages, while automatically removing join/leave notifications. Designed with extensibility and reliability in mind, this bot acts as a complete moderation assistant for maintaining clean, secure, and well-managed Telegram communities.
